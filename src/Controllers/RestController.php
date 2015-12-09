@@ -2,6 +2,8 @@
 
 namespace Min\Controllers;
 
+use Illuminate\Pagination\Paginator;
+use Illuminate\Http\Request;
 use Min\BaseModel;
 use Min\Exceptions\ErrorCode;
 use Illuminate\Routing\Controller as BaseController;
@@ -43,16 +45,26 @@ abstract class RestController extends BaseController
     }
 
     /**
-     * @param $id
+     * @param Request $request
      * @return \Illuminate\Http\Response
      */
-    public function show($id)
+    public function index(Request $request)
     {
-        /** @var BaseModel $model */
-        $model = static::$model;
-
         try {
-            $this->response->setData($model::fetch($id));
+            $model = $this->getModelByUri($request);
+
+            /** @var Paginator $paginator */
+            if (is_object($model)) {
+                $paginator = $model->paginate();
+            } else {
+                $paginator = $model::paginate();
+            }
+            
+            $paginationData = $paginator->toArray();
+
+            $this->response->setData($paginationData['data']);
+            unset($paginationData['data']);
+            $this->response->setMetadata('pagination', $paginationData);
         } catch (\Exception $ex) {
             $this->response->setError($ex);
         }
@@ -61,57 +73,123 @@ abstract class RestController extends BaseController
     }
 
     /**
-     * Show the form for creating a new resource.
-     *
+     * @param Request $request
      * @return \Illuminate\Http\Response
      */
-//    public function create()
-//    {
-//        //
-//    }
+    public function show(Request $request)
+    {
+        try {
+            $model = $this->getModelByUri($request);
+
+            $this->response->setData($model);
+        } catch (\Exception $ex) {
+            $this->response->setError($ex);
+        }
+
+        return $this->createResponse();
+    }
 
     /**
-     * Store a newly created resource in storage.
-     *
      * @param  \Illuminate\Http\Request $request
      * @return \Illuminate\Http\Response
      */
-//    public function store(Request $request)
-//    {
-//        //
-//    }
+    public function store(Request $request)
+    {
+        try {
+            $model = $this->getModelByUri($request);
+
+            /** @var BaseModel $instance */
+            if (is_object($model)) {
+                $instance = $model->create($request->input());
+            } else {
+                $instance = $model::create($request->input());
+            }
+
+            $this->response->setData($instance);
+        } catch (\Exception $ex) {
+            $this->response->setError($ex);
+        }
+
+        return $this->createResponse();
+    }
 
     /**
-     * Show the form for editing the specified resource.
-     *
-     * @param  int $id
-     * @return \Illuminate\Http\Response
-     */
-//    public function edit($id)
-//    {
-//        //
-//    }
-
-    /**
-     * Update the specified resource in storage.
-     *
      * @param  \Illuminate\Http\Request $request
-     * @param  int $id
      * @return \Illuminate\Http\Response
      */
-//    public function update(Request $request, $id)
-//    {
-//        //
-//    }
+    public function update(Request $request)
+    {
+        try {
+            /** @var BaseModel $model */
+            $model = $this->getModelByUri($request);
+            
+            $model->update($request->input());
+
+            $this->response->setData($model);
+        } catch (\Exception $ex) {
+            $this->response->setError($ex);
+        }
+
+        return $this->createResponse();
+    }
 
     /**
-     * Remove the specified resource from storage.
-     *
-     * @param  int $id
+     * @param  \Illuminate\Http\Request $request
      * @return \Illuminate\Http\Response
      */
-//    public function destroy($id)
-//    {
-//        //
-//    }
+    public function destroy(Request $request)
+    {
+        try {
+            /** @var BaseModel $model */
+            $model = $this->getModelByUri($request);
+
+            $model->delete();
+
+        } catch (\Exception $ex) {
+            $this->response->setError($ex);
+        }
+
+        return $this->createResponse();
+    }
+
+    /**
+     * @param Request $request
+     * @return BaseModel $model|\Illuminate\Database\Eloquent\Relations\Relation
+     */
+    private function getModelByUri(Request $request)
+    {
+        $uriParts = explode('?', $request->getRequestUri());
+        $parts = explode('/', current($uriParts));
+        array_shift($parts);
+
+        /** @var BaseModel $baseModel */
+        $baseModel = '\App\\' . ucfirst(array_shift($parts));
+
+        if (count($parts) === 0) {
+            return $baseModel;
+        }
+
+        $instance = $baseModel::fetch(array_shift($parts));
+
+        // Traverse the URI parts as the baseModel's relationships
+        $relationships = [];
+        $relationship = 0;
+        $isId = false;
+        foreach ($parts as $part) {
+            if ($isId) {
+                $relationships[$relationship] = $part;
+                $isId = false;
+            } else {
+                $relationship = $part;
+                $relationships[$relationship] = null;
+                $isId = true;
+            }
+        }
+
+        foreach ($relationships as $relationship => $id) {
+            $instance = $instance->fetchRelationship($relationship, $id);
+        }
+
+        return $instance;
+    }
 }
